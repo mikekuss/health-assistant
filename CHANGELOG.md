@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Saving an existing integration's settings no longer fails with HTTP 500.** `POST /integrations/{domain}/config-flow?integration_id=…` (the Edit Configuration form) raised `UnboundLocalError: cannot access local variable 'generated'` after the commit, because the show-once machine-secret dict was bound only on the create-new-instance branch. The change was saved, but the UI reported an error. `generated` is now initialised before the create/update branch, so updates return the normal success payload (without secrets). Regression test in `backend/tests/test_integrations.py`.
+
 ## [v0.8.0] - 2026-09-20
 
 ### Added

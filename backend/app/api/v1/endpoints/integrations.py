@@ -303,6 +303,10 @@ async def submit_config_flow(
                 ),
             )
 
+    # Show-once machine secrets provisioned below (create path only). Bound
+    # here so the update path, which never provisions any, returns cleanly.
+    generated: dict[str, str] = {}
+
     # Check if this is an update to an existing instance
     if integration_id:
         try:
@@ -356,7 +360,6 @@ async def submit_config_flow(
         # the instance id as context binding. The machine routes below
         # reject instances without a configured secret.
         provider = integration_registry.get_provider(domain)
-        generated: dict[str, str] = {}
         instance_uuid = uuid4()
         wants_webhook = provider is not None and _provider_overrides(
             provider, "handle_webhook"

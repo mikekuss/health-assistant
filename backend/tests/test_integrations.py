@@ -282,3 +282,67 @@ async def test_execute_custom_action_not_supported(async_client: AsyncClient):
         assert "not support custom actions" in response.json()["detail"]
 
     app.dependency_overrides.clear()
+
+@pytest.mark.asyncio
+async def test_submit_config_flow_updates_existing_instance(async_client: AsyncClient):
+    """Saving an existing instance's settings (Edit Configuration) returns 200.
+
+    Regression: the show-once ``generated`` secrets dict was bound only on the
+    create path, so the update path raised UnboundLocalError after the commit
+    and the UI showed an HTTP 500 even though the change was saved.
+    """
+    from app.core.security import get_current_user
+    from app.main import app
+    from app.core.database import get_db
+
+    patient_uuid = uuid.uuid4()
+    integration_id = uuid.uuid4()
+
+    existing = MagicMock()
+    existing.id = integration_id
+    existing.user_config = {"api_url": "http://old.example"}
+    existing.instance_name = "Old name"
+
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = existing
+
+    mock_db = AsyncMock()
+    mock_db.execute.return_value = mock_result
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_current_user] = override_get_current_user
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        with patch(
+            "app.api.v1.endpoints.integrations.is_domain_disabled",
+            new=AsyncMock(return_value=False),
+        ), patch("app.api.v1.endpoints.integrations.integration_registry") as mock_registry:
+            mock_flow = MagicMock()
+            mock_flow.validate_input = AsyncMock(
+                return_value={"instance_name": "New name", "api_url": "http://new.example"}
+            )
+            mock_flow.prepare_for_storage = AsyncMock(side_effect=lambda cfg: cfg)
+            mock_flow.max_instances_per_user = None
+            mock_flow.is_oauth = False
+            mock_registry.get_config_flow.return_value = mock_flow
+
+            response = await async_client.post(
+                f"/api/v1/integrations/dev_dummy/config-flow"
+                f"?patient_id={patient_uuid}&integration_id={integration_id}",
+                json={"instance_name": "New name", "api_url": "http://new.example"},
+            )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["message"] == "Integration configured successfully."
+        # The update path never provisions machine secrets.
+        assert "secret_notice" not in data
+        assert existing.user_config == {"api_url": "http://new.example"}
+        assert existing.instance_name == "New name"
+        mock_db.commit.assert_awaited_once()
+        mock_db.add.assert_not_called()
+    finally:
+        app.dependency_overrides.clear()
